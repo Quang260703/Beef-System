@@ -69,7 +69,7 @@ def main():
         return np.mean(errors)
     
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=20)
+    study.optimize(objective, n_trials=50)
     
     print("\nBest Parameters:", study.best_params)
     
