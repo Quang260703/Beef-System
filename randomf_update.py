@@ -73,7 +73,7 @@ except Exception as e:
 
 
 # Time Series Split
-def temporal_train_test_split(df: pd.DataFrame, test_size: float = 0.2):
+def temporal_train_test_split(df: pd.DataFrame, test_size: float = 0.6):
     test_idx = int(len(df) * (1 - test_size))
     
     train_df = df.iloc[:test_idx]

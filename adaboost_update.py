@@ -41,7 +41,7 @@ def main():
 
     exog_cols = [col for col in data.columns if col != target_col and col != "Date"]
 
-    split_idx = int(len(data) * 0.8)
+    split_idx = int(len(data) * 0.4)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
     

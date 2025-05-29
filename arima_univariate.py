@@ -33,8 +33,8 @@ def main():
     # define target column
     target_col = 'Gross_Revenue'
     
-    # do an 80/20 train-test split
-    split_idx = int(len(data) * 0.8)
+    # do an 40/60 train-test split
+    split_idx = int(len(data) * 0.1)
     train = data.iloc[:split_idx]
     test = data.iloc[split_idx:]
     

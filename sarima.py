@@ -27,7 +27,7 @@ def main():
     exog_cols = ['Net_Gas_Price', 'Corn_Price', 'CPI', 'Exchange_Rate_JPY_USD']
     
     # 80/20 split
-    split_idx = int(len(data) * 0.8)
+    split_idx = int(len(data) * 0.4)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
     
