@@ -24,7 +24,6 @@ def main():
     
     # define columns
     target_col = 'Gross_Revenue'
-    exog_cols = ['Net_Gas_Price', 'Corn_Price', 'CPI', 'Exchange_Rate_JPY_USD']
     
     # 80/20 split
     split_idx = int(len(data) * 0.4)
@@ -33,8 +32,6 @@ def main():
     
     endog_train = train[target_col]
     endog_test  = test[target_col]
-    exog_train = train[exog_cols]
-    exog_test  = test[exog_cols]
     
     dates_train = train['Date']
     dates_test  = test['Date']
@@ -52,12 +49,10 @@ def main():
         idx = split_idx + i
 
         current_endog = data[target_col].iloc[:idx]
-        current_exog  = data[exog_cols].iloc[:idx]
 
         # define SARIMAX model
         model = SARIMAX(
             current_endog,
-            exog=current_exog,
             order=order,
             seasonal_order=seasonal_order,
             enforce_stationarity=False,
@@ -68,8 +63,7 @@ def main():
         results = model.fit(disp=False)
 
         # forecast next point at 'idx'
-        next_exog = data[exog_cols].iloc[idx:idx+1]
-        pred = results.predict(start=idx, end=idx, exog=next_exog)
+        pred = results.predict(start=idx, end=idx)
 
         # store the single-step forecast
         rolling_preds.append(pred.iloc[0])

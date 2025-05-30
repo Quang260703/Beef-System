@@ -38,6 +38,7 @@ def main():
     # Rolling statistics of the previous 3 months
     df[f'{target_col}_Rolling_Means'] = df[target_col].shift(1).rolling(window=3).mean()
     df[f'{target_col}_Rolling_STD'] = df[target_col].shift(1).rolling(window=3).std()
+
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
 
@@ -127,15 +128,20 @@ def main():
 
     scaler_full = StandardScaler()
     X_train_full_scaled = scaler_full.fit_transform(train_df[exog_cols])
+    X_test_full_scaled = scaler_full.transform(test_df[exog_cols])
 
     model_full = SVR(**best_params)
     model_full.fit(X_train_full_scaled, y_train_full)
 
     y_train_pred_full = model_full.predict(X_train_full_scaled)
+    y_test_pred_full = model_full.predict(X_test_full_scaled)
+
     train_preds_series = pd.Series(y_train_pred_full, index=train_df.index)
+    test_preds_series = pd.Series(y_test_pred_full, index=test_df.index)
 
     # Evaluate training error
     evaluate_forecast("SVR Training", y_train_full, train_preds_series)
+    evaluate_forecast("SVR Testing", y_test_full, test_preds_series)
 
     # 4) EVALUATE AND PLOT
     evaluate_forecast("SVR Rolling", y_test_full, rolling_preds_series)
@@ -145,8 +151,9 @@ def main():
 
     plt.plot(train_df['Date'], y_train_full, label='Train Actual', color='blue', marker='o')
     plt.plot(test_df['Date'], y_test_full, label='Test Actual', color='black', marker='o')
-    plt.plot(test_df['Date'], rolling_preds_series, label='Test Prediction (Rolling)', color='red', marker='x')
-    
+    plt.plot(test_df['Date'], rolling_preds_series, label='Test Prediction (Rolling)', color='green', marker='x')
+    plt.plot(test_df['Date'], test_preds_series, label='Test Prediction (Full)', color='red', marker='x')
+
     plt.axvline(x=test_df['Date'].iloc[0], color='gray', linestyle='--', label='Train-Test Split')
     plt.title("SVR Rolling-Fit (with Optuna Hyperparams): Actual vs. Predicted")
     plt.xlabel("Date")
