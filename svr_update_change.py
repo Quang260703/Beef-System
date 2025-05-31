@@ -30,27 +30,26 @@ def main():
     
     target_col = 'Gross_Revenue'
 
-    # Lag features with dynamic window sizing
-    max_lag = 6  # Maximum lag period in months
-    for lag in range(max_lag):
-        df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag+1)
-
-    # Rolling statistics of the previous 3 months
-    df[f'{target_col}_Rolling_Means'] = df[target_col].shift(1).rolling(window=3).mean()
-    df[f'{target_col}_Rolling_STD'] = df[target_col].shift(1).rolling(window=3).std()
-
-    df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)
-
-    exog_cols = [col for col in df.columns if col != target_col and col != "Date"]
-
-    split_idx = int(len(df) * 0.1)
+    split_idx = int(len(df) * 0.6)
     train_df = df.iloc[:split_idx]
     test_df  = df.iloc[split_idx:]
+
+    # Lag features with dynamic window sizing
+    max_lag = 6  # Maximum lag period in months
+    for lag in range(1, max_lag+1):
+        train_df[f'Gross_Revenue_lag{lag}'] = train_df['Gross_Revenue'].shift(lag)
+
+    # Rolling statistics of the previous 3 months
+    train_df[f'{target_col}_Rolling_Mean'] = train_df[target_col].shift(1).rolling(window=3).mean()
+    train_df[f'{target_col}_Rolling_STD'] = train_df[target_col].shift(1).rolling(window=3).std()
+
+    train_df.dropna(inplace=True)
+    train_df.reset_index(drop=True, inplace=True)
+
+    exog_cols = [col for col in train_df.columns if col != target_col and col != "Date"]
     
     X_train_full = train_df[exog_cols]
     y_train_full = train_df[target_col]
-    X_test_full  = test_df[exog_cols]
     y_test_full  = test_df[target_col]
     
     # 2) HYPERPARAM TUNING WITH OPTUNA ON THE TRAINING SET ONLY
@@ -98,16 +97,22 @@ def main():
 
     # 3) ROLLING (WALK-FORWARD) FORECAST ON THE TEST SET
     rolling_preds = []
+    model_df = train_df.copy()
     
     for i in range(len(test_df)):
         # up to train + i rows
-        idx = split_idx + i
+        next_row = test_df.iloc[i:i+1].copy()
+
+        history = model_df['Gross_Revenue'].tail(max_lag)
+        for lag in range(1, max_lag+1):
+            next_row[f'Gross_Revenue_lag{lag}'] = history.iloc[-lag] if len(history) >= lag else np.nan
+
+        rolling_window = model_df['Gross_Revenue'].tail(3)
+        next_row[f'{target_col}_Rolling_Mean'] = rolling_window.mean()
+        next_row[f'{target_col}_Rolling_STD'] = rolling_window.std()
         
-        # define current training portion
-        current_df = df.iloc[:idx]
-        
-        X_current = current_df[exog_cols]
-        y_current = current_df[target_col]
+        X_current = model_df[exog_cols]
+        y_current = model_df[target_col]
 
         # scale features
         scaler = StandardScaler()
@@ -118,10 +123,12 @@ def main():
         model.fit(X_current_scaled, y_current)
 
         # predict the next point (idx)
-        X_next = df[exog_cols].iloc[idx:idx+1]
-        X_next_scaled = scaler.transform(X_next)
+        X_next_scaled = scaler.transform(next_row[exog_cols])
         pred = model.predict(X_next_scaled)[0]
         rolling_preds.append(pred)
+
+        next_row[target_col] = pred
+        model_df = pd.concat([model_df, next_row], ignore_index=True)
 
     # align rolling_preds with test index
     rolling_preds_series = pd.Series(rolling_preds, index=test_df.index)
