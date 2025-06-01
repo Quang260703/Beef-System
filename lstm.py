@@ -3,9 +3,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Sequential # type: ignore
+from tensorflow.keras.layers import LSTM, Dense, Dropout # type: ignore
+from tensorflow.keras.optimizers import Adam # type: ignore
 import optuna
 
 data = pd.read_csv('Cow_Calf.csv', parse_dates=['Date'])
@@ -18,8 +18,8 @@ values = data[target_col].values.reshape(-1, 1)
 
 # Split data: 80% train, 10% validation, 10% test
 n = len(data)
-train_end = int(n * 0.8)
-val_end = int(n * 0.9)
+train_end = int(n * 0.4)
+val_end = int(n * 0.6)
 
 train = values[:train_end]
 val   = values[train_end:val_end]

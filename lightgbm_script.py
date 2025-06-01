@@ -14,40 +14,27 @@ df = pd.read_csv("Cow_Calf.csv", parse_dates=["Date"])
 df.sort_values("Date", inplace=True)
 df.set_index("Date", inplace=True)
 
-# time-based features
-df['Month'] = df.index.month
-df['Quarter'] = df.index.quarter
+target_col = 'Gross_Revenue'
 
-# define lag periods (in months) for features and target
-LAGS = [1, 2, 3]
-for lag in LAGS:
-    for feature in ["Exchange_Rate_JPY_USD", "Net_Gas_Price", "CPI", "Corn_Price"]:
-        df[f'{feature}_lag{lag}'] = df[feature].shift(lag)
-    df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag)
+max_lag = 6  # Maximum lag period in months
+for lag in range(max_lag):
+    df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag+1)
 
-# create rolling statistics for selected features
-window_sizes = [3, 6]
-for window in window_sizes:
-    for feature in ["Exchange_Rate_JPY_USD", "Net_Gas_Price"]:
-        df[f'{feature}_ma{window}'] = df[feature].rolling(window).mean()
-        df[f'{feature}_std{window}'] = df[feature].rolling(window).std()
 
-# 2. Enhanced Feature Engineering: Add Differenced Features
-for feature in ["Gross_Revenue", "Exchange_Rate_JPY_USD", "Net_Gas_Price"]:
-    df[f'{feature}_diff1'] = df[feature].diff()
-for window in [3, 6]:
-    df[f'Gross_Revenue_diff1_ma{window}'] = df['Gross_Revenue_diff1'].rolling(window).mean()
+df[f'{target_col}_Rolling_Means'] = df[target_col].shift(1).rolling(3).mean() 
+df[f'{target_col}_Rolling_STD'] = df[target_col].shift(1).rolling(3).std()
 
 df.dropna(inplace=True)
+df.reset_index(drop=True, inplace=True)
 
 # 3. Correlation Heatmap for the 4 Original Predictors
-original_predictors = ["Exchange_Rate_JPY_USD", "Net_Gas_Price", "CPI", "Corn_Price"]
-plt.figure(figsize=(6, 5))
-corr = df[original_predictors].corr()
-sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
-plt.title("Correlation Heatmap for Original Predictors")
-plt.tight_layout()
-plt.show()
+# original_predictors = ["Exchange_Rate_JPY_USD", "Net_Gas_Price", "CPI", "Corn_Price"]
+# plt.figure(figsize=(6, 5))
+# corr = df[original_predictors].corr()
+# sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
+# plt.title("Correlation Heatmap for Original Predictors")
+# plt.tight_layout()
+# plt.show()
 
 # 4. Define Features and Target
 target = "Gross_Revenue"
@@ -56,7 +43,7 @@ X = df[features]
 y = df[target]
 
 # 5. Time Series Train-Test Split (80% Train, 20% Test)
-test_size = int(len(df) * 0.2)  # 20% test
+test_size = int(len(df) * 0.4)  # 20% test
 X_train = X[:-test_size]
 X_test = X[-test_size:]
 y_train = y[:-test_size]

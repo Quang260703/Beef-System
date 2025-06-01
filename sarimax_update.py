@@ -38,7 +38,7 @@ def main():
     exog_cols = [col for col in data.columns if col != target_col and col != "Date"]
 
     
-    split_idx = int(len(data) * 0.8)
+    split_idx = int(len(data) * 0.2)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
     
@@ -126,6 +126,7 @@ def main():
     
     plt.plot(full_dates, full_actual, label='Actual (All)', color='blue', marker='o')
     plt.plot(dates_test, test_pred, label='Test Prediction', color='red', marker='x')
+    plt.plot(dates_train, train_pred, label='Train Prediction', color='green', marker='x')
     plt.axvline(x=dates_test.iloc[0], color='gray', linestyle='--', label='Train-Test Split')
     plt.title("SARIMAX Best-Order Model: Actual vs. Predicted")
     plt.xlabel("Date")
