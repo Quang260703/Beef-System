@@ -26,7 +26,7 @@ def main():
     target_col = 'Gross_Revenue'
     
     # 80/20 split
-    split_idx = int(len(data) * 0.4)
+    split_idx = int(len(data) * 0.8)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
     
