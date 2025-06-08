@@ -22,9 +22,23 @@ def main():
     data.reset_index(drop=True, inplace=True)
     
     target_col = 'Gross_Revenue'
-    exog_cols = ['Net_Gas_Price', 'Corn_Price', 'CPI', 'Exchange_Rate_JPY_USD']
+
+    # Lag features with dynamic window sizing
+    max_lag = 6  # Maximum lag period in months
+    for lag in range(max_lag):
+        data[f'Gross_Revenue_lag{lag}'] = data['Gross_Revenue'].shift(lag+1)
+
+    # Rolling statistics of the previous 3 months
+    data[f'{target_col}_Rolling_Means'] = data[target_col].shift(1).rolling(window=3).mean()
+    data[f'{target_col}_Rolling_STD'] = data[target_col].shift(1).rolling(window=3).std()
     
-    split_idx = int(len(data) * 0.8)
+    data.dropna(inplace=True)
+    data.reset_index(drop=True, inplace=True)
+
+    exog_cols = [col for col in data.columns if col != target_col and col != "Date"]
+
+    
+    split_idx = int(len(data) * 0.2)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
     
@@ -89,13 +103,19 @@ def main():
         end=endog_train.index[-1],
         exog=exog_train
     )
-    test_pred = best_model.predict(
-        start=endog_test.index[0],
-        end=endog_test.index[-1],
+    # test_pred = best_model.predict(
+    #     start=endog_test.index[0],
+    #     end=endog_test.index[-1],
+    #     exog=exog_test
+    # )
+
+    test_pred = best_model.forecast(
+        steps=len(endog_test),
         exog=exog_test
     )
 
     # Evaluate on test
+    evaluate_forecast(f"SARIMAX Training", endog_train, train_pred)
     evaluate_forecast(f"SARIMAX{best_order}x{best_seasonal_order}", endog_test, test_pred)
     
     # Plot
@@ -106,6 +126,7 @@ def main():
     
     plt.plot(full_dates, full_actual, label='Actual (All)', color='blue', marker='o')
     plt.plot(dates_test, test_pred, label='Test Prediction', color='red', marker='x')
+    plt.plot(dates_train, train_pred, label='Train Prediction', color='green', marker='x')
     plt.axvline(x=dates_test.iloc[0], color='gray', linestyle='--', label='Train-Test Split')
     plt.title("SARIMAX Best-Order Model: Actual vs. Predicted")
     plt.xlabel("Date")

@@ -29,9 +29,22 @@ def main():
     df.reset_index(drop=True, inplace=True)
     
     target_col = 'Gross_Revenue'
-    exog_cols = ['Net_Gas_Price', 'Corn_Price', 'CPI', 'Exchange_Rate_JPY_USD']
-    
-    split_idx = int(len(df) * 0.8)
+
+    # Lag features with dynamic window sizing
+    max_lag = 6  # Maximum lag period in months
+    for lag in range(max_lag):
+        df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag+1)
+
+    # Rolling statistics of the previous 3 months
+    df[f'{target_col}_Rolling_Means'] = df[target_col].shift(1).rolling(window=3).mean()
+    df[f'{target_col}_Rolling_STD'] = df[target_col].shift(1).rolling(window=3).std()
+
+    df.dropna(inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    exog_cols = [col for col in df.columns if col != target_col and col != "Date"]
+
+    split_idx = int(len(df) * 0.1)
     train_df = df.iloc[:split_idx]
     test_df  = df.iloc[split_idx:]
     
@@ -42,18 +55,18 @@ def main():
     
     # 2) HYPERPARAM TUNING WITH OPTUNA ON THE TRAINING SET ONLY
     def objective(trial):
-        C = trial.suggest_loguniform('C', 1e-3, 1e3)
-        epsilon = trial.suggest_loguniform('epsilon', 1e-3, 1e1)
+        C = trial.suggest_float('C', 1e-1, 1e1, log=True)
+        epsilon = trial.suggest_float('epsilon', 1e-3, 1, log=True)
         kernel = trial.suggest_categorical('kernel', ['linear','rbf','poly'])
 
         params = {'C': C, 'epsilon': epsilon, 'kernel': kernel}
 
         if kernel == 'rbf':
-            gamma = trial.suggest_loguniform('gamma', 1e-3, 1e1)
+            gamma = trial.suggest_float('gamma', 1e-3, 1e1, log=True)
             params['gamma'] = gamma
         elif kernel == 'poly':
             degree = trial.suggest_int('degree', 2, 5)
-            gamma = trial.suggest_loguniform('gamma', 1e-3, 1e1)
+            gamma = trial.suggest_float('gamma', 1e-3, 1e1, log=True)
             params['degree'] = degree
             params['gamma'] = gamma
 
@@ -113,6 +126,19 @@ def main():
     # align rolling_preds with test index
     rolling_preds_series = pd.Series(rolling_preds, index=test_df.index)
 
+    scaler_full = StandardScaler()
+    X_train_full_scaled = scaler_full.fit_transform(train_df[exog_cols])
+
+    model_full = SVR(**best_params)
+    model_full.fit(X_train_full_scaled, y_train_full)
+
+    y_train_pred_full = model_full.predict(X_train_full_scaled)
+
+    train_preds_series = pd.Series(y_train_pred_full, index=train_df.index)
+
+    # Evaluate training error
+    evaluate_forecast("SVR Training", y_train_full, train_preds_series)
+
     # 4) EVALUATE AND PLOT
     evaluate_forecast("SVR Rolling", y_test_full, rolling_preds_series)
 
@@ -121,8 +147,8 @@ def main():
 
     plt.plot(train_df['Date'], y_train_full, label='Train Actual', color='blue', marker='o')
     plt.plot(test_df['Date'], y_test_full, label='Test Actual', color='black', marker='o')
-    plt.plot(test_df['Date'], rolling_preds_series, label='Test Prediction (Rolling)', color='red', marker='x')
-    
+    plt.plot(test_df['Date'], rolling_preds_series, label='Test Prediction (Rolling)', color='green', marker='x')
+
     plt.axvline(x=test_df['Date'].iloc[0], color='gray', linestyle='--', label='Train-Test Split')
     plt.title("SVR Rolling-Fit (with Optuna Hyperparams): Actual vs. Predicted")
     plt.xlabel("Date")

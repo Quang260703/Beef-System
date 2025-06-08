@@ -1,4 +1,3 @@
-#underfitting issue
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -28,8 +27,20 @@ def main():
     data.reset_index(drop=True, inplace=True)
     
     target_col = 'Gross_Revenue'
-    exog_cols = ['Net_Gas_Price', 'Corn_Price', 'CPI', 'Exchange_Rate_JPY_USD']
+
+    max_lag = 6  # Maximum lag period in months
+    for lag in range(max_lag):
+        data[f'Gross_Revenue_lag{lag}'] = data['Gross_Revenue'].shift(lag+1)
+
+
+    data[f'{target_col}_Rolling_Means'] = data[target_col].shift(1).rolling(3).mean() 
+    data[f'{target_col}_Rolling_STD'] = data[target_col].shift(1).rolling(3).std()
     
+    data.dropna(inplace=True)
+    data.reset_index(drop=True, inplace=True)
+
+    exog_cols = [col for col in data.columns if col != target_col and col != "Date"]
+
     split_idx = int(len(data) * 0.8)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
@@ -45,7 +56,7 @@ def main():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled  = scaler.transform(X_test)
     
-    tscv = TimeSeriesSplit(n_splits=3)
+    tscv = TimeSeriesSplit(n_splits=5)
     
     # Define the objective function for Optuna
     def objective(trial):
@@ -70,7 +81,7 @@ def main():
         return np.mean(errors)
     
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=20)
+    study.optimize(objective, n_trials=50)
     
     print("\nBest Parameters:", study.best_params)
     
@@ -86,6 +97,7 @@ def main():
     train_pred = best_adb.predict(X_train_scaled)
     test_pred  = best_adb.predict(X_test_scaled)
     
+    evaluate_forecast("AdaBoost (Train)", y_train, train_pred)
     evaluate_forecast("AdaBoost", y_test, test_pred)
     
     # Plot results

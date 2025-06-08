@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor
 import optuna
 import sys
@@ -15,6 +15,17 @@ print("NumPy version:", np.__version__)
 print("Scikit-learn version:", sklearn.__version__)
 print("Optuna version:", optuna.__version__)
 
+def evaluate_forecast(model_name, actual, predicted):
+    mae = mean_absolute_error(actual, predicted)
+    rmse = np.sqrt(mean_squared_error(actual, predicted))
+    ss_res = np.sum((actual - predicted)**2)
+    ss_tot = np.sum((actual - actual.mean())**2)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
+    acc = 100.0 * (1 - mae / actual.mean()) if actual.mean() != 0 else float('nan')
+    print(f"\n[{model_name}] Test Performance:")
+    print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.2f}")
+    print(f"Accuracy (1 - MAE/mean * 100): {acc:.2f}%")
+    
 # Data Loading and Validation
 try:
     df = pd.read_csv('Cow_Calf.csv', parse_dates=["Date"])
@@ -31,34 +42,16 @@ if missing_cols:
 # Data Preparation
 def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values("Date").set_index("Date")
-    
-    # Temporal features
-    df['Month'] = df.index.month
-    df['Quarter'] = df.index.quarter
-    df['Year'] = df.index.year
-    
+
     # Lag features with dynamic window sizing
     max_lag = 6  # Maximum lag period in months
-    for lag in [1, 2, 3, 6]:
-        for feature in ["Exchange_Rate_JPY_USD", "Net_Gas_Price", "CPI", "Corn_Price"]:
-            df[f'{feature}_lag{lag}'] = df[feature].shift(lag)
-        df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag)
+    for lag in range(max_lag):
+        df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag+1)
     
-    # Rolling statistics with outlier clipping
-    for window in [3, 6]:
-        for feature in ["Exchange_Rate_JPY_USD", "Net_Gas_Price"]:
-            df[f'{feature}_ma{window}'] = (
-                df[feature]
-                .rolling(window)
-                .mean()
-                .clip(lower=df[feature].quantile(0.01),
-                      upper=df[feature].quantile(0.99))
-            )
-            df[f'{feature}_std{window}'] = df[feature].rolling(window).std()
-    
-    # Differenced features with noise reduction
-    for feature in ["Gross_Revenue", "Exchange_Rate_JPY_USD", "Net_Gas_Price"]:
-        df[f'{feature}_diff1'] = df[feature].diff().rolling(3).mean()  # Smoothed differencing
+    # Rolling statistics of the previous 3 months
+    feature = "Gross_Revenue"
+    df[f'{feature}_Rolling_Means'] = df[feature].shift(1).rolling(3).mean() 
+    df[f'{feature}_Rolling_STD'] = df[feature].shift(1).rolling(3).std()
     
     # Final cleaning
     initial_rows = len(df)
@@ -72,6 +65,8 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 try:
     df = prepare_dataframe(df)
+    pd.set_option('display.max_columns', None)
+    print(df)
 except Exception as e:
     print(f"Data preparation failed: {str(e)}")
     sys.exit(1)
@@ -191,6 +186,8 @@ try:
     test_preds = pipeline.predict(X_test)
     test_mae = mean_absolute_error(y_test, test_preds)
     print(f"Final Test MAE: {test_mae:.2f}")
+    evaluate_forecast(f"Random Forest Training", y_train, pipeline.predict(X_train))
+    evaluate_forecast(f"Random Forest", y_test, test_preds)
     
     
 except Exception as e:
