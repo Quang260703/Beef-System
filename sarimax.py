@@ -38,7 +38,7 @@ def main():
     exog_cols = [col for col in data.columns if col != target_col and col != "Date"]
 
     
-    split_idx = int(len(data) * 0.2)
+    split_idx = int(len(data) * 0.6)
     train = data.iloc[:split_idx]
     test  = data.iloc[split_idx:]
     
@@ -103,14 +103,9 @@ def main():
         end=endog_train.index[-1],
         exog=exog_train
     )
-    # test_pred = best_model.predict(
-    #     start=endog_test.index[0],
-    #     end=endog_test.index[-1],
-    #     exog=exog_test
-    # )
-
-    test_pred = best_model.forecast(
-        steps=len(endog_test),
+    test_pred = best_model.predict(
+        start=endog_test.index[0],
+        end=endog_test.index[-1],
         exog=exog_test
     )
 

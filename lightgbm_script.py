@@ -9,6 +9,17 @@ import lightgbm as lgb
 import optuna
 from sklearn.base import clone  # <-- Use 'clone', not 'cloneq'
 
+def evaluate_forecast(model_name, actual, predicted):
+    mae = mean_absolute_error(actual, predicted)
+    rmse = np.sqrt(mean_squared_error(actual, predicted))
+    ss_res = np.sum((actual - predicted)**2)
+    ss_tot = np.sum((actual - actual.mean())**2)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
+    acc = 100.0 * (1 - mae / actual.mean()) if actual.mean() != 0 else float('nan')
+    print(f"\n[{model_name}] Test Performance:")
+    print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.2f}")
+    print(f"Accuracy (1 - MAE/mean * 100): {acc:.2f}%")
+
 # 1. Data Loading and Initial Feature Engineering
 df = pd.read_csv("Cow_Calf.csv", parse_dates=["Date"])
 df.sort_values("Date", inplace=True)
@@ -133,6 +144,9 @@ residual_model.fit(X_train_scaled, train_residuals)
 
 y_train_pred_adjusted = train_preds + residual_model.predict(X_train_scaled)
 y_test_pred_adjusted = final_model.predict(X_test_scaled) + residual_model.predict(X_test_scaled)
+
+evaluate_forecast("Final Model (Train)", y_train, y_train_pred_adjusted)
+evaluate_forecast("Final Model (Test)", y_test, y_test_pred_adjusted)
 
 # 10. Full Time-Series Visualization
 plt.figure(figsize=(14, 7))

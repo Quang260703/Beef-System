@@ -73,14 +73,14 @@ except Exception as e:
 
 
 # Time Series Split
-def temporal_train_test_split(df: pd.DataFrame, test_size: float = 0.2):
+def temporal_train_test_split(df: pd.DataFrame, test_size: float = 0.125):
     test_idx = int(len(df) * (1 - test_size))
     
     train_df = df.iloc[:test_idx]
     test_df = df.iloc[test_idx:]
     
     # Create validation set from end of training data
-    val_idx = int(len(train_df) * 0.8)
+    val_idx = int(len(train_df) * 0.875)
     val_df = train_df.iloc[val_idx:]
     train_df = train_df.iloc[:val_idx]
     
@@ -108,7 +108,7 @@ class ForecastingPipeline:
         self.residual_model = None
         self.feature_importances_ = None
         
-    def optimize_hyperparameters(self, X, y, n_trials=50):
+    def optimize_hyperparameters(self, X, y, n_trials=20):
         
         
         def objective(trial):

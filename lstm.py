@@ -18,8 +18,8 @@ values = data[target_col].values.reshape(-1, 1)
 
 # Split data: 80% train, 10% validation, 10% test
 n = len(data)
-train_end = int(n * 0.4)
-val_end = int(n * 0.6)
+train_end = int(n * 0.8)
+val_end = int(n * 0.9)
 
 train = values[:train_end]
 val   = values[train_end:val_end]
