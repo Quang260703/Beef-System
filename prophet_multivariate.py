@@ -21,6 +21,16 @@ data.dropna(inplace=True)
 data.reset_index(drop=True, inplace=True)
 
 target_col = 'Gross_Revenue'
+
+max_lag = 6  # Maximum lag period in months
+for lag in range(max_lag):
+    data[f'Gross_Revenue_lag{lag}'] = data['Gross_Revenue'].shift(lag+1)
+
+data[f'{target_col}_Rolling_Means'] = data[target_col].shift(1).rolling(3).mean() 
+data[f'{target_col}_Rolling_STD'] = data[target_col].shift(1).rolling(3).std()
+
+data.dropna(inplace=True)
+data.reset_index(drop=True, inplace=True)
 exog_cols = [col for col in data.columns if col != target_col and col != "Date"]
 
 # Split data into training and testing
@@ -35,23 +45,38 @@ endog_test  = test[target_col]
 full_dates = pd.concat([dates_train, dates_test])
 full_actual = pd.concat([endog_train, endog_test])
 
-# Prepare data for Prophet
-train_prophet = train.rename(columns={"Date": "ds", "Gross_Revenue": "y"})
-test_prophet = test.rename(columns={"Date": "ds"})
-train_prophet[exog_cols] = train[exog_cols]
-test_prophet[exog_cols]  = test[exog_cols]
+# Initialize list to store walk-forward predictions
+rolling_preds = []
+current_train = train.copy()
 
-# Initialize and train Prophet model
-model_prophet = Prophet()
-for reg in exog_cols:
-    model_prophet.add_regressor(reg)
-model_prophet.fit(train_prophet)
+# Starting walk-forward validation
+for i in range(len(test)):
+    # Prepare training data
+    train_df = current_train.rename(columns={"Date": "ds", "Gross_Revenue": "y"})
+    
+    # Prepare next point to forecast
+    next_point = test.iloc[i:i+1].copy()
+    next_point.rename(columns={"Date": "ds"}, inplace=True)
+    
+    # Create and train model
+    model = Prophet()
+    for reg in exog_cols:
+        model.add_regressor(reg)
+    model.fit(train_df)
+    
+    # Make forecast
+    forecast = model.predict(next_point)
+    pred = forecast['yhat'].values[0]
+    rolling_preds.append(pred)
+    
+    # Update training set with actual observation
+    current_train = pd.concat([current_train, test.iloc[i:i+1]], axis=0)
 
-# Forecast future values
-forecast_prophet = model_prophet.predict(test_prophet)
+# Convert predictions to numpy array
+rolling_preds = np.array(rolling_preds)
 
-# Plot forecast
-evaluate_forecast("Prophet Test", endog_test, forecast_prophet['yhat'].values)
+# Evaluate walk-forward performance
+evaluate_forecast("Prophet Walk-Forward", endog_test, rolling_preds)
 
 # Highlight training/test split
 plt.figure(figsize=(12,6))
@@ -60,7 +85,7 @@ plt.figure(figsize=(12,6))
 plt.plot(full_dates, full_actual, label='Actual (All)', color='blue', marker='o')
 
 # rolling forecast in red
-plt.plot(dates_test, forecast_prophet['yhat'], label='Test Prediction', color='red', marker='x')
+plt.plot(dates_test, rolling_preds, label='Test Prediction', color='red', marker='x')
 
 # mark train/test boundary
 plt.axvline(x=dates_test.iloc[0], color='gray', linestyle='--', label='Train-Test Split')
