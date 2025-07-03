@@ -1,42 +1,70 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
+from sklearn.decomposition import PCA
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.svm import SVR
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from pyswarm import pso
 
 def evaluate_forecast(model_name, actual, predicted):
     mae = mean_absolute_error(actual, predicted)
     rmse = np.sqrt(mean_squared_error(actual, predicted))
-    ss_res = np.sum((actual - predicted) ** 2)
-    ss_tot = np.sum((actual - actual.mean()) ** 2)
+    mse = mean_squared_error(actual, predicted)
+    mape = np.mean(np.abs((actual - predicted) / actual)) * 100
+    mpe = np.mean((actual - predicted) / actual) * 100
+    rmspe = np.sqrt(np.mean(((actual - predicted) / actual) ** 2)) * 100
+    ss_res = np.sum((actual - predicted)**2)
+    ss_tot = np.sum((actual - actual.mean())**2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
-    acc = 100.0 * (1 - mae / actual.mean()) if actual.mean() != 0 else float('nan')
-    
     print(f"\n[{model_name}] Test Performance:")
-    print(f"MAE: {mae:.2f}")
-    print(f"RMSE: {rmse:.2f}")
-    print(f"R²: {r2:.2f}")
+    print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.2f}, MSE: {mse:.2f}, MAPE: {mape:.2f}%, MPE: {mpe:.2f}%, RMSPE: {rmspe:.2f}%")
+    acc = 100.0 * (1 - mae / actual.mean()) if actual.mean() != 0 else float('nan')
     print(f"Accuracy (1 - MAE/mean * 100): {acc:.2f}%")
 
-def mrmr(X, y, k):
-    mi = mutual_info_regression(X, y)
+def mrmr(X, y, k, plot=True, mi_threshold=0.01):
+    mi = mutual_info_regression(X, y, random_state=42)
     mi = pd.Series(mi, index=X.columns)
-    selected = [mi.idxmax()]
+    
+    mi_filtered = mi[mi > mi_threshold]
+    if len(mi_filtered) == 0:
+        raise ValueError("No features have MI above threshold. Lower the threshold.")
+    
+    selected = [mi_filtered.idxmax()]
+    all_scores = {feat: [mi[feat]] for feat in X.columns}
     
     for _ in range(k - 1):
         remaining = list(set(X.columns) - set(selected))
         score = {}
+        
         for feat in remaining:
             redundancy = np.nanmean([X[feat].corr(X[s]) for s in selected])
             score[feat] = mi[feat] - redundancy
-        selected.append(max(score, key=score.get))
+        
+        best = max(score, key=score.get)
+        selected.append(best)
+
+        for feat in X.columns:
+            if feat in score:
+                all_scores[feat].append(score[feat])
+            else:
+                all_scores[feat].append(all_scores[feat][-1])
     
-    return selected
+    if plot:
+        plt.figure(figsize=(12, 6))
+        for feat, scores in all_scores.items():
+            plt.plot(scores, label=feat, alpha=0.7)
+        plt.xlabel("Selection Step")
+        plt.ylabel("mRMR Score (MI - Correlation)")
+        plt.title("mRMR Score Evolution of All Features")
+        plt.grid(True, linestyle='--', alpha=0.6)
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
+        plt.tight_layout()
+        plt.show()
+
+    return selected, all_scores
 
 def svr_pso_objective(params, X, y):
     C, epsilon, gamma = params
@@ -90,11 +118,40 @@ def main():
 
     # MRMR feature selection
     k = 5
-    selected_features = mrmr(X_train_full, y_train_full, k)
+    selected_features, all_scores = mrmr(X_train_full, y_train_full, k)
     print(f"Selected features using MRMR: {selected_features}")
+    # Create a list of tuples (feature, last_score), replacing None with 0.0
+    feat_scores = [(feat, scores[-1] if scores[-1] is not None else 0.0) 
+                for feat, scores in all_scores.items()]
+
+    # Sort descending by last_score
+    feat_scores_sorted = sorted(feat_scores, key=lambda x: x[1], reverse=True)
+
+    # Print sorted results
+    for feat, val in feat_scores_sorted:
+        print(f"{feat}: {val:.4f}")
 
     X_train = X_train_full[selected_features]
     X_test = X_test_full[selected_features]
+
+    # Standardize before PCA (different from MinMaxScaler used for SVR)
+    scaler_std = StandardScaler()
+    X_train_std = scaler_std.fit_transform(X_train)
+
+    pca = PCA(n_components=2)
+    X_train_pca = pca.fit_transform(X_train_std)
+
+    explained_var = pca.explained_variance_ratio_ * 100 
+
+    plt.figure(figsize=(8, 6))
+    scatter = plt.scatter(X_train_pca[:, 0], X_train_pca[:, 1], c=y_train_full, cmap='viridis', alpha=0.7)
+    plt.colorbar(scatter, label=target_col)
+    plt.xlabel(f'Principal Component 1 ({explained_var[0]:.1f}% variance)')
+    plt.ylabel(f'Principal Component 2 ({explained_var[1]:.1f}% variance)')
+    plt.title(f'PCA of Training Features\n(PC1 + PC2 explain {explained_var.sum():.1f}% of variance)')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
     # PSO bounds for C, epsilon, gamma
     lb = [0.1, 0.001, 0.0001]

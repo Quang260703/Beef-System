@@ -91,11 +91,15 @@ def plot_decomposition(decomposition):
 def evaluate_forecast(model_name, actual, predicted):
     mae = mean_absolute_error(actual, predicted)
     rmse = np.sqrt(mean_squared_error(actual, predicted))
+    mse = mean_squared_error(actual, predicted)
+    mape = np.mean(np.abs((actual - predicted) / actual)) * 100
+    mpe = np.mean((actual - predicted) / actual) * 100
+    rmspe = np.sqrt(np.mean(((actual - predicted) / actual) ** 2)) * 100
     ss_res = np.sum((actual - predicted)**2)
     ss_tot = np.sum((actual - actual.mean())**2)
     r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
     print(f"\n[{model_name}] Test Performance:")
-    print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.2f}")
+    print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.2f}, MSE: {mse:.2f}, MAPE: {mape:.2f}%, MPE: {mpe:.2f}%, RMSPE: {rmspe:.2f}%")
     acc = 100.0 * (1 - mae / actual.mean()) if actual.mean() != 0 else float('nan')
     print(f"Accuracy (1 - MAE/mean * 100): {acc:.2f}%")
     return mae, rmse, r2
