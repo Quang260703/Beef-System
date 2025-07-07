@@ -102,7 +102,7 @@ def evaluate_forecast(model_name, actual, predicted):
     print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}, R²: {r2:.2f}, MSE: {mse:.2f}, MAPE: {mape:.2f}%, MPE: {mpe:.2f}%, RMSPE: {rmspe:.2f}%")
     acc = 100.0 * (1 - mae / actual.mean()) if actual.mean() != 0 else float('nan')
     print(f"Accuracy (1 - MAE/mean * 100): {acc:.2f}%")
-    return mae, rmse
+    return mae, rmse, r2
 
 # Find optimal differencing order for stationarity
 def find_optimal_d(series, max_d=2):
@@ -157,6 +157,10 @@ def main():
         target_col = 'Gross_Revenue'
         data['Real_Price'] = data[target_col] / data['CPI'] * 100
     
+    # Apply log transformation to stabilize variance
+    print("Applying log transformation to stabilize variance...")
+    data['Log_Real_Price'] = np.log(data['Real_Price'] + 1e-9)
+    
     # EDA: Plot original vs real prices
     plt.figure(figsize=(14, 8))
     plt.subplot(2, 1, 1)
@@ -167,14 +171,23 @@ def main():
     plt.ylabel('Value')
     plt.legend()
     plt.grid(True)
+    
+    plt.subplot(2, 1, 2)
+    plt.plot(data['Date'], data['Log_Real_Price'], label='Log Real Price', color='purple')
+    plt.title('Log-Transformed Real Prices')
+    plt.xlabel('Date')
+    plt.ylabel('Log Value')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig('price_analysis.png', dpi=300)
     plt.show()
     
     # Step 1: ACF/PACF Analysis on Original Series
-    analyze_acf_pacf(data['Real_Price'], lags=36, title="Original Series")
+    analyze_acf_pacf(data['Log_Real_Price'], lags=36, title="Original Series (Log Transformed)")
     
     # Time series decomposition
     print("\nTime Series Decomposition:")
-    decomposition = decompose_series(data.set_index('Date')['Real_Price'], period=12)
+    decomposition = decompose_series(data.set_index('Date')['Log_Real_Price'], period=12)
     plot_decomposition(decomposition)
     
     # 80/20 split
@@ -182,13 +195,15 @@ def main():
     train = data.iloc[:split_idx]
     test = data.iloc[split_idx:]
     
+    exog_cols = ['Exchange_Rate_JPY_USD', 'Net_Gas_Price', 'CPI', 'Corn_Price']
+    
     # Determine differencing orders
     print("\nDetermining Differencing Orders:")
-    d = find_optimal_d(train['Real_Price'])
-    D = find_optimal_D(train['Real_Price'], s=12)
+    d = find_optimal_d(train['Log_Real_Price'])
+    D = find_optimal_D(train['Log_Real_Price'], s=12)
     
     # Apply differencing
-    stationary_series = train['Real_Price'].copy()
+    stationary_series = train['Log_Real_Price'].copy()
     if d > 0:
         stationary_series = stationary_series.diff(d).dropna()
     if D > 0:
@@ -221,9 +236,12 @@ def main():
                         for Q in Q_values:
                             try:
                                 model = SARIMAX(
-                                    train['Real_Price'],
+                                    endog=train['Log_Real_Price'],
+                                    exog=train[exog_cols],
                                     order=(p,d,q),
-                                    seasonal_order=(P,D,Q,m)
+                                    seasonal_order=(P,D,Q,m),
+                                    enforce_stationarity=False,
+                                    enforce_invertibility=False
                                 )
                                 results = model.fit(disp=False)
                                 if results.aic < best_aic:
@@ -243,62 +261,149 @@ def main():
         return
     
     # Fit best model on training data
+    print("\nFitting Best Model on Training Data...")
     best_model = SARIMAX(
-        train['Real_Price'],
-        order=best_order,
-        seasonal_order=best_seasonal_order
+        endog=train['Log_Real_Price'],
+        exog=train[exog_cols],
+        order=(p, d, q),
+        seasonal_order=(P, D, Q, 12),
+        enforce_stationarity=False,
+        enforce_invertibility=False
     )
-    results = best_model.fit(disp=False)
-    print(results.summary())
+    best_results = best_model.fit(disp=False)
+    print(best_results.summary())
 
-    # Forecast entire test period
-    forecast = results.get_forecast(steps=len(test))
-    pred_mean = forecast.predicted_mean
-    conf_int = forecast.conf_int()
+    # Prepare data structures
+    history = train['Log_Real_Price'].copy()
+    exog_history = train[exog_cols].copy()
+    test_dates = test['Date']
+    walk_forward_preds = []
+    conf_lower = []
+    conf_upper = []
+    
+    # Transformation functions
+    def log_to_original(x):
+        return np.exp(x) - 1e-9
+    
+    # Progress bar setup
+    progress_bar = tqdm(total=len(test), desc="Walk-Forward Forecasting")
+    
+    # Walk-forward validation
+    for i in range(len(test)):
+        # Create SARIMA model
+        model = SARIMAX(
+            endog=history,
+            exog=exog_history,
+            order=(p, d, q),
+            seasonal_order=(P, D, Q, 12),
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        )
+        
+        # Fit model
+        results = model.fit(disp=False)
+        
+        # Forecast next step with confidence intervals
+        exog_forecast = test[exog_cols].iloc[i:i+1]
+        forecast = results.get_forecast(steps=1, exog=exog_forecast)
+        pred_mean = forecast.predicted_mean.iloc[0]
+        pred_ci = forecast.conf_int().iloc[0]
+        
+        # Store predictions and confidence intervals
+        walk_forward_preds.append(pred_mean)
+        conf_lower.append(pred_ci[0])
+        conf_upper.append(pred_ci[1])
+        
+        # Update history with actual test observation
+        actual_value = test['Log_Real_Price'].iloc[i]
+        # Create date index for current test observation
+        current_date = test_dates.iloc[i]
 
-    # Extract forecast results
-    test_actual = test['Real_Price']
-    preds = pred_mean
-    conf_lower = conf_int.iloc[:, 0]
-    conf_upper = conf_int.iloc[:, 1]
+        # Add actual value to history with correct date index
+        history = pd.concat([history, pd.Series([actual_value], index=[current_date])])
 
-    # Evaluate
-    mae, rmse = evaluate_forecast(
-        f"SARIMA({best_order})({best_seasonal_order})[12] - One-Time Fit",
-        test_actual,
-        preds
+        # Add corresponding exog with aligned index
+        exog_forecast.index = [current_date]
+        exog_history = pd.concat([exog_history, exog_forecast])
+        
+        # Update progress bar
+        progress_bar.update(1)
+    
+    progress_bar.close()
+    
+    # Create series for results
+    walk_forward_series = pd.Series(walk_forward_preds, index=test.index)
+    conf_lower_series = pd.Series(conf_lower, index=test.index)
+    conf_upper_series = pd.Series(conf_upper, index=test.index)
+    
+    # Transform back to original scale
+    test_original = log_to_original(test['Log_Real_Price'])
+    preds_original = log_to_original(walk_forward_series)
+    conf_lower_original = log_to_original(conf_lower_series)
+    conf_upper_original = log_to_original(conf_upper_series)
+    
+    # Evaluate performance on original scale
+    mae, rmse, r2 = evaluate_forecast(
+        f"SARIMAX({p},{d},{q})({P},{D},{Q})[12] Walk-Forward", 
+        test_original, 
+        preds_original
     )
-
-    # Plot
+    
+    # Setup figure
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12), gridspec_kw={'height_ratios': [3, 1]})
-
-    # Entire time series
-    ax1.plot(data['Date'], data['Real_Price'], label='Historical Data', color='blue', alpha=0.7)
-    ax1.axvspan(data['Date'].iloc[0], data['Date'].iloc[split_idx-1], color='green', alpha=0.1, label='Training Period')
-    ax1.plot(test['Date'], test_actual, label='Actual Test Values', color='blue', linestyle='-', marker='o', markersize=5)
-    ax1.plot(test['Date'], preds, label='Forecast', color='red', linestyle='--', marker='x', markersize=6)
-    ax1.fill_between(test['Date'], conf_lower, conf_upper, color='gray', alpha=0.3, label='95% Confidence Interval')
-    ax1.axvline(x=test['Date'].iloc[0], color='gray', linestyle='--', label='Train-Test Split')
-    ax1.set_title(f"SARIMA Forecast\nOrder: ({best_order}) Seasonal: ({best_seasonal_order},12)")
+    
+    # Plot entire time series
+    ax1.plot(data['Date'], data['Real_Price'], 
+             label='Historical Data', color='blue', alpha=0.7)
+    
+    # Highlight training period
+    ax1.axvspan(data['Date'].iloc[0], data['Date'].iloc[split_idx-1], 
+                color='green', alpha=0.1, label='Training Period')
+    
+    # Plot test actuals
+    ax1.plot(test_dates, test_original, 
+             label='Actual Test Values', color='blue', linestyle='-', marker='o', markersize=5)
+    
+    # Plot walk-forward predictions
+    ax1.plot(test_dates, preds_original, 
+             label='Walk-Forward Forecast', color='red', linestyle='--', marker='x', markersize=6)
+    
+    # Plot confidence intervals
+    ax1.fill_between(test_dates, conf_lower_original, conf_upper_original,
+                     color='gray', alpha=0.3, label='95% Confidence Interval')
+    
+    # Train/test split line
+    ax1.axvline(x=test_dates.iloc[0], color='gray', 
+                linestyle='--', label='Train-Test Split')
+    
+    # Formatting
+    ax1.set_title(f"Walk-Forward SARIMA Forecast\nOrder: ({p},{d},{q}) Seasonal: ({P},{D},{Q},12)")
     ax1.set_ylabel("Real Price")
     ax1.legend(loc='upper left')
     ax1.grid(True)
+    
+    # Format x-axis dates
     ax1.xaxis.set_major_locator(mdates.YearLocator())
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
-    # Forecast errors
-    forecast_errors = test_actual - preds
-    ax2.plot(test['Date'], forecast_errors, 'ro-', label='Forecast Error')
+    
+    # Plot forecast errors
+    forecast_errors = test_original - preds_original
+    
+    ax2.plot(test_dates, forecast_errors, 'ro-', label='Forecast Error')
     ax2.axhline(y=0, color='k', linestyle='-')
-    ax2.fill_between(test['Date'], -mae, mae, color='gray', alpha=0.2, label=f'±MAE ({mae:.2f})')
+    ax2.fill_between(test_dates, -mae, mae, color='gray', alpha=0.2, label=f'±MAE ({mae:.2f})')
+    
+    # Formatting
     ax2.set_title(f"Forecast Errors (MAE: {mae:.2f}, RMSE: {rmse:.2f})")
     ax2.set_xlabel("Date")
     ax2.set_ylabel("Error")
     ax2.legend()
     ax2.grid(True)
+    
+    # Format x-axis dates
     ax2.xaxis.set_major_locator(mdates.YearLocator())
     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
+    
     plt.tight_layout()
     plt.show()
 

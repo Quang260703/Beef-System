@@ -9,6 +9,45 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import optuna
 
+# Export forecast residuals, predictions, and error metrics to CSV files.
+def export_forecast_results(
+    model_name: str,
+    dates: pd.Series,
+    actual: pd.Series,
+    predicted: pd.Series,
+    filename_prefix: str = "svr_forecast"
+):
+    results_df = pd.DataFrame({
+        'Date': dates.values,
+        'Actual': actual.values,
+        'Predicted': predicted.values,
+        'Residual': actual.values - predicted.values,
+    })
+
+    results_csv = f"{filename_prefix}_results.csv"
+    results_df.to_csv(results_csv, index=False)
+    print(f"[{model_name}] Residuals and predictions exported to: {results_csv}")
+
+    # Compute error metrics
+    mae = mean_absolute_error(actual, predicted)
+    rmse = np.sqrt(mean_squared_error(actual, predicted))
+    mse = mean_squared_error(actual, predicted)
+    mape = np.mean(np.abs((actual - predicted) / actual)) * 100
+    mpe = np.mean((actual - predicted) / actual) * 100
+    rmspe = np.sqrt(np.mean(((actual - predicted) / actual) ** 2)) * 100
+    ss_res = np.sum((actual - predicted)**2)
+    ss_tot = np.sum((actual - actual.mean())**2)
+    r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else float('nan')
+
+    metrics_df = pd.DataFrame({
+        'Metric': ['MAE', 'RMSE', 'R²', 'MSE', 'MAPE', 'MPE', 'RMSPE'],
+        'Value': [mae, rmse, r2, mse, mape, mpe, rmspe]
+    })
+
+    metrics_csv = f"{filename_prefix}_metrics.csv"
+    metrics_df.to_csv(metrics_csv, index=False)
+    print(f"[{model_name}] Evaluation metrics exported to: {metrics_csv}")
+
 def evaluate_forecast(model_name, actual, predicted):
     mae = mean_absolute_error(actual, predicted)
     rmse = np.sqrt(mean_squared_error(actual, predicted))
@@ -88,7 +127,7 @@ def main():
 
     exog_cols = [col for col in df.columns if col != target_col and col != "Date"]
 
-    split_idx = int(len(df) * 0.7)
+    split_idx = int(len(df) * 0.8)
     train_df = df.iloc[:split_idx]
     test_df  = df.iloc[split_idx:]
     
@@ -237,6 +276,14 @@ def main():
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+    export_forecast_results(
+        model_name="SVR Rolling",
+        dates=test_df['Date'],
+        actual=y_test_full,
+        predicted=rolling_preds_series,
+        filename_prefix="svr_forecast"
+    )
 
 if __name__ == "__main__":
     main()
