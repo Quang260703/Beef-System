@@ -160,6 +160,14 @@ def main():
     pca = PCA(n_components=2)
     X_train_pca = pca.fit_transform(X_train_std)
 
+    # Create a DataFrame of PCA loadings
+    loadings = pd.DataFrame(
+        pca.components_.T,
+        index=X_train_full.columns,
+        columns=['PCA1', 'PCA2']
+    )
+    print("PCA Component Loadings:")
+    print(loadings)
     explained_var = pca.explained_variance_ratio_ * 100 
 
     plt.figure(figsize=(8, 6))
@@ -168,6 +176,16 @@ def main():
     plt.xlabel(f'Principal Component 1 ({explained_var[0]:.1f}% variance)')
     plt.ylabel(f'Principal Component 2 ({explained_var[1]:.1f}% variance)')
     plt.title(f'PCA of Training Features\n(PC1 + PC2 explain {explained_var.sum():.1f}% of variance)')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(10, 5))
+    loadings[['PCA1', 'PCA2']].plot(kind='bar', figsize=(12, 6))
+    plt.title('Feature Contributions to PCA1 and PCA2')
+    plt.ylabel('Loading Value')
+    plt.xlabel('Features')
+    plt.xticks(rotation=45)
     plt.grid(True)
     plt.tight_layout()
     plt.show()

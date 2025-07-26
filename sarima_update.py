@@ -200,7 +200,7 @@ def main():
     
     # Grid search for optimal parameters
     p_values = [0,1,2]
-    d_values = [0,1]
+    d_values = [0,1,2]
     q_values = [0,1,2]
     P_values = [0,1]
     D_values = [0,1]
@@ -255,6 +255,20 @@ def main():
     forecast = results.get_forecast(steps=len(test))
     pred_mean = forecast.predicted_mean
     conf_int = forecast.conf_int()
+
+    # Compute test residuals (forecast error)
+    test_residuals = test['Real_Price'] - pred_mean
+
+    # Combine into DataFrame for export
+    residual_df = pd.DataFrame({
+        'Date': test['Date'],
+        'Actual': test['Real_Price'].values,
+        'Forecast': pred_mean.values,
+        'Residual': test_residuals.values
+    })
+
+    # Save to CSV
+    residual_df.to_csv('sarima_test_residuals.csv', index=False)
 
     # Extract forecast results
     test_actual = test['Real_Price']
