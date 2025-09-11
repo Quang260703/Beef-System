@@ -19,7 +19,7 @@ def test_stationarity(series, title="ADF Test"):
     print(f"\n{title}")
     result = adfuller(series.dropna())
     print(f'ADF Statistic: {result[0]:.4f}')
-    print(f'p-value: {result[1]:.4f}')
+    print(f'p-value: {result[1]}')
     print('Critical Values:')
     for k, v in result[4].items():
         print(f'\t{k}: {v:.4f}')
@@ -33,16 +33,12 @@ def analyze_acf_pacf(series, lags=24, title=""):
     acf_vals = acf(series, nlags=lags, fft=False)
     pacf_vals = pacf(series, nlags=lags, method='ywm')  # Correct PACF calculation
     
-    # Create subplots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-    
     # Plot ACF
-    sm.graphics.tsa.plot_acf(series, lags=lags, ax=ax1, title=f'ACF - {title}')
+    sm.graphics.tsa.plot_acf(series, lags=lags, fft=False, title=f'ACF - {title}')
+    plt.show()
     
     # Plot PACF
-    sm.graphics.tsa.plot_pacf(series, lags=lags, ax=ax2, method='ywm', title=f'PACF - {title}')
-    
-    plt.tight_layout()
+    sm.graphics.tsa.plot_pacf(series, lags=lags, method='ywm', title=f'PACF - {title}')
     plt.show()
     
     # Interpretation guidance
@@ -147,6 +143,9 @@ def main():
     data.sort_values('Date', inplace=True)
     data.reset_index(drop=True, inplace=True)
     
+    summary = data['Gross_Revenue'].describe()
+    print(summary)
+
     # Inflation adjustment
     if 'CPI' not in data.columns:
         print("\nWarning: CPI data not found - using nominal values")
@@ -159,7 +158,6 @@ def main():
     
     # EDA: Plot original vs real prices
     plt.figure(figsize=(14, 8))
-    plt.subplot(2, 1, 1)
     plt.plot(data['Date'], data[target_col], label='Nominal')
     plt.plot(data['Date'], data['Real_Price'], label='Real (Inflation-Adjusted)')
     plt.title('Nominal vs Real Prices')
@@ -191,12 +189,14 @@ def main():
     stationary_series = train['Real_Price'].copy()
     if d > 0:
         stationary_series = stationary_series.diff(d).dropna()
-    if D > 0:
-        stationary_series = stationary_series.diff(12 * D).dropna()
-    
     # Step 2: ACF/PACF Analysis on Stationary Series
     analyze_acf_pacf(stationary_series, lags=36, 
-                    title=f"After {d}-order diff and {D}-order seasonal diff")
+                    title=f"After {d}-order diff")
+    
+    if D > 0:
+        stationary_series = stationary_series.diff(12 * D).dropna()
+    analyze_acf_pacf(stationary_series, lags=36, 
+                    title=f"After {D}-order seasonal diff and {d}-order diff")
     
     # Grid search for optimal parameters
     p_values = [0,1,2]
@@ -208,6 +208,7 @@ def main():
     m = 12  # monthly seasonality
 
     best_aic = float('inf')
+    best_bic = float('inf')
     best_order = None
     best_seasonal_order = None
     best_model = None
@@ -223,11 +224,13 @@ def main():
                                 model = SARIMAX(
                                     train['Real_Price'],
                                     order=(p,d,q),
-                                    seasonal_order=(P,D,Q,m)
+                                    seasonal_order=(P,D,Q,m),
                                 )
                                 results = model.fit(disp=False)
-                                if results.aic < best_aic:
+                                print(f"AIC: {results.aic:.3f}, BIC: {results.bic:.3f}, order: {(p, d, q)}, seasonal_order: {(P, D, Q, m)}")
+                                if results.aic < best_aic or (results.aic == best_aic and results.bic < best_bic):
                                     best_aic = results.aic
+                                    best_bic = results.bic
                                     best_order = (p,d,q)
                                     best_seasonal_order = (P,D,Q,m)
                                     best_model = results
@@ -256,20 +259,6 @@ def main():
     pred_mean = forecast.predicted_mean
     conf_int = forecast.conf_int()
 
-    # Compute test residuals (forecast error)
-    test_residuals = test['Real_Price'] - pred_mean
-
-    # Combine into DataFrame for export
-    residual_df = pd.DataFrame({
-        'Date': test['Date'],
-        'Actual': test['Real_Price'].values,
-        'Forecast': pred_mean.values,
-        'Residual': test_residuals.values
-    })
-
-    # Save to CSV
-    residual_df.to_csv('sarima_test_residuals.csv', index=False)
-
     # Extract forecast results
     test_actual = test['Real_Price']
     preds = pred_mean
@@ -284,34 +273,26 @@ def main():
     )
 
     # Plot
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12), gridspec_kw={'height_ratios': [3, 1]})
+    fig, ax1 = plt.subplots(figsize=(14, 6))
 
     # Entire time series
     ax1.plot(data['Date'], data['Real_Price'], label='Historical Data', color='blue', alpha=0.7)
-    ax1.axvspan(data['Date'].iloc[0], data['Date'].iloc[split_idx-1], color='green', alpha=0.1, label='Training Period')
-    ax1.plot(test['Date'], test_actual, label='Actual Test Values', color='blue', linestyle='-', marker='o', markersize=5)
-    ax1.plot(test['Date'], preds, label='Forecast', color='red', linestyle='--', marker='x', markersize=6)
-    ax1.fill_between(test['Date'], conf_lower, conf_upper, color='gray', alpha=0.3, label='95% Confidence Interval')
+    ax1.axvspan(data['Date'].iloc[0], data['Date'].iloc[split_idx-1], 
+                color='green', alpha=0.1, label='Training Period')
+    # ax1.plot(test['Date'], test_actual, label='Actual Test Values', 
+    #         color='blue', linestyle='-', marker='o', markersize=5)
+    ax1.plot(test['Date'], preds, label='Forecast', 
+            color='red', linestyle='--', marker='x', markersize=6)
+    ax1.fill_between(test['Date'], conf_lower, conf_upper, 
+                    color='gray', alpha=0.3, label='95% Confidence Interval')
     ax1.axvline(x=test['Date'].iloc[0], color='gray', linestyle='--', label='Train-Test Split')
-    ax1.set_title(f"SARIMA Forecast\nOrder: ({best_order}) Seasonal: ({best_seasonal_order},12)")
+
+    ax1.set_title(f"SARIMA Forecast\nOrder: ({best_order}) Seasonal: ({best_seasonal_order})")
     ax1.set_ylabel("Real Price")
     ax1.legend(loc='upper left')
     ax1.grid(True)
     ax1.xaxis.set_major_locator(mdates.YearLocator())
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-
-    # Forecast errors
-    forecast_errors = test_actual - preds
-    ax2.plot(test['Date'], forecast_errors, 'ro-', label='Forecast Error')
-    ax2.axhline(y=0, color='k', linestyle='-')
-    ax2.fill_between(test['Date'], -mae, mae, color='gray', alpha=0.2, label=f'±MAE ({mae:.2f})')
-    ax2.set_title(f"Forecast Errors (MAE: {mae:.2f}, RMSE: {rmse:.2f})")
-    ax2.set_xlabel("Date")
-    ax2.set_ylabel("Error")
-    ax2.legend()
-    ax2.grid(True)
-    ax2.xaxis.set_major_locator(mdates.YearLocator())
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
 
     plt.tight_layout()
     plt.show()
