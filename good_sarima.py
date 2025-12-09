@@ -197,79 +197,112 @@ def main():
     
     
     # 3. Parameter Estimation (Box-Jenkins Step 2)
+    model = SARIMAX(
+    y_train,
+    order=stepwise_model.order,
+    seasonal_order=stepwise_model.seasonal_order,
+    ).fit()
 
-    model = SARIMAX(y_train, order=stepwise_model.order, seasonal_order=stepwise_model.seasonal_order).fit()
     print(model.summary())
 
-
-    # 4. Diagnostic Checking (Box-Jenkins Step 3)
-
-    # save residuals to a csv for model comparison
-    '''
-    residuals_df = pd.DataFrame({'ARIMA Residuals': model.resid}, index=train.index)
-    residuals_df.to_csv('arima_model_residuals.csv')
-    '''
+    # =======================================================
+    # 2. Residual Diagnostics (Box-Jenkins Step 3)
+    # =======================================================
     analyze_residuals(model.resid)
 
+    # =======================================================
+    # 3. WALK-FORWARD VALIDATION (Box-Jenkins Step 4)
+    # =======================================================
 
-    # 5-6. Model Evaluation and Forecasting (Box-Jenkins Step 4)
+    predictions = []
+    lower_bounds = []
+    upper_bounds = []
 
-    # forecast differenced values
-    forecast_stats = model.get_forecast(steps=len(y_test))
-    diff_forecast = forecast_stats.predicted_mean
-    confidence_intervals = forecast_stats.conf_int()
+    history = train.copy()     # rolling window grows each step
 
-    # invert differencing
-    last_seasonal_diff = train['seasonal_diff'].iloc[-1]
-    seasonal_forecast = last_seasonal_diff + np.cumsum(diff_forecast)
-    seasonal_base_values = df[target_col].iloc[split_idx - 12 : split_idx - 12 + len(test)].values
-    original_test = test[target_col].values
-    last_seasonal_value = train['seasonal_diff'].iloc[-1]
-    seasonal_forecast = [last_seasonal_value + diff_forecast[0]]
-    seasonal_forecast = last_seasonal_value + np.cumsum(diff_forecast)
-    seasonal_forecast = np.array(seasonal_forecast)
-    seasonal_base_values = df[target_col].iloc[split_idx - 12: split_idx - 12 + len(test)].values
+    for t in range(len(test)):
 
-    # undo seasonal differencing
-    lower_diff = confidence_intervals[:, 0]
-    upper_diff = confidence_intervals[:, 1]
-    lower_seasonal = train['seasonal_diff'].iloc[-1] + np.cumsum(lower_diff)
-    upper_seasonal = train['seasonal_diff'].iloc[-1] + np.cumsum(upper_diff)
+        # Fit SARIMA on current history
+        model = SARIMAX(
+            history['seasonal_diff'],
+            order=stepwise_model.order,
+            seasonal_order=stepwise_model.seasonal_order,
+        ).fit()
 
-    if len(seasonal_base_values) < len(lower_seasonal):
-        pad_len = len(lower_seasonal) - len(seasonal_base_values)
-        seasonal_base_values = np.pad(seasonal_base_values, (0, pad_len), mode='edge')
+        # Forecast ONE step
+        forecast_stats = model.get_forecast(steps=1)
+        diff_forecast = forecast_stats.predicted_mean.iloc[0]
 
-    lower_bound = lower_seasonal + seasonal_base_values
-    upper_bound = upper_seasonal + seasonal_base_values
+        ci = forecast_stats.conf_int()
+        lower_diff = ci.iloc[0, 0]
+        upper_diff = ci.iloc[0, 1]
 
-    if len(seasonal_base_values) < len(seasonal_forecast):
-        pad_len = len(seasonal_forecast) - len(seasonal_base_values)
-        seasonal_base_values = np.pad(seasonal_base_values, (0, pad_len), mode='edge')
+        # ----------------------------
+        # Undo seasonal differencing
+        # ----------------------------
+        last_seasonal = history['seasonal_diff'].iloc[-1]
 
-    # rescale data back to original
-    original_pred = scaler.inverse_transform((seasonal_forecast + seasonal_base_values).reshape(-1, 1)).flatten()
-    original_test = scaler.inverse_transform(y_test.reshape(-1, 1)).flatten()
-    lower_bound = scaler.inverse_transform(lower_bound.reshape(-1, 1)).flatten()
-    upper_bound = scaler.inverse_transform(upper_bound.reshape(-1, 1)).flatten()
+        seasonal_forecast = last_seasonal + diff_forecast
+        lower_seas = last_seasonal + lower_diff
+        upper_seas = last_seasonal + upper_diff
 
-    # save predicted-actual to csv
-    residuals = original_test - original_pred
-    residuals_df = pd.DataFrame({'ARIMA Residuals': residuals}, index=dates_test)
-    residuals_df.to_csv('arima_residuals.csv')
+        # seasonal base value y(t-12)
+        seasonal_base = df[target_col].iloc[split_idx - 12 + t]
 
+        y_pred_scaled = seasonal_forecast + seasonal_base
+        y_low_scaled = lower_seas + seasonal_base
+        y_up_scaled  = upper_seas + seasonal_base
+
+        # ----------------------------
+        # Invert scaling
+        # ----------------------------
+        y_pred = scaler.inverse_transform([[y_pred_scaled]])[0][0]
+        y_low  = scaler.inverse_transform([[y_low_scaled]])[0][0]
+        y_up   = scaler.inverse_transform([[y_up_scaled]])[0][0]
+
+        predictions.append(y_pred)
+        lower_bounds.append(y_low)
+        upper_bounds.append(y_up)
+
+        # ----------------------------
+        # Expand rolling history using TRUE test value
+        # ----------------------------
+        actual_val = test.iloc[t][target_col]
+        past_val = df[target_col].iloc[split_idx - 12 + t]
+
+        new_seasonal_diff = actual_val - past_val
+
+        history = pd.concat([
+            history,
+            pd.DataFrame({"seasonal_diff": [new_seasonal_diff]})
+        ])
+
+
+    # =======================================================
+    # 4. Evaluation + Plotting
+    # =======================================================
+
+    # Convert test data back
+    original_test = scaler.inverse_transform(
+        y_test.reshape(-1, 1)
+    ).flatten()
+
+    # Save residuals
+    residuals = original_test - np.array(predictions)
+    residuals_df = pd.DataFrame({'SARIMA Residuals': residuals}, index=dates_test)
+    residuals_df.to_csv('sarima_residuals.csv')
+
+    # Full plot
     full_dates = np.concatenate([dates_train, dates_test])
-    # full_actual = np.concatenate([train['Gross_Revenue'].values, test['Gross_Revenue'].values])
 
-    # Plot results
-    plt.figure()
+    plt.figure(figsize=(12,6))
     plt.plot(full_dates, df['Real_Price'], label='Actual', color='blue', marker='o')
     plt.axvline(x=dates_test[0], color='gray', linestyle='--', label='Train-Test Split')
 
-    plt.plot(dates_test, original_pred, label='Predicted', color='red', marker='x')
-    #plt.fill_between(dates_test, lower_bound, upper_bound, color='red', alpha=0.3, label='Confidence Interval')
+    plt.plot(dates_test, predictions, label='Walk-Forward Predicted', color='red', marker='x')
+    # plt.fill_between(dates_test, lower_bounds, upper_bounds, alpha=0.3, color='red')
 
-    plt.title("ARIMA forecast: Actual vs Predicted (Train + Test)")
+    plt.title("Walk-Forward SARIMA Forecast: Actual vs Predicted (Train + Test)")
     plt.xlabel("Date")
     plt.ylabel("Inflation Adjusted Gross Revenue")
     plt.legend()
@@ -277,19 +310,11 @@ def main():
     plt.tight_layout()
     plt.show()
 
-    evaluate_forecast("ARIMA with Manual Seasonal Differencing", original_test, original_pred)
-
-    forecast_comparison = pd.DataFrame({
-    "Date": dates_test,
-    "Actual": original_test,
-    "Forecast_SARIMA": original_pred,
-    "Lower_CI": lower_bound,
-    "Upper_CI": upper_bound
-    })
-    forecast_comparison.to_csv("/Users/mihir/Code/Beef_Value_Chain/Cow_Calf/Plot/updated_sarima_forecast_comparison.csv", index=False)
-
-
-
+    evaluate_forecast(
+        "Walk-Forward SARIMA with Manual Seasonal Differencing",
+        original_test,
+        predictions
+    )
 
 if __name__ == "__main__":
     main()

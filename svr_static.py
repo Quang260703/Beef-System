@@ -15,7 +15,7 @@ def export_forecast_results(
     dates: pd.Series,
     actual: pd.Series,
     predicted: pd.Series,
-    filename_prefix: str = "svr_forecast"
+    filename_prefix: str = "svr_forecast_static"
 ):
     results_df = pd.DataFrame({
         'Date': dates.values,
@@ -112,15 +112,6 @@ def main():
     df.reset_index(drop=True, inplace=True)
     
     target_col = 'Gross_Revenue'
-
-    # Lag features with dynamic window sizing
-    max_lag = 6  # Maximum lag period in months
-    for lag in range(max_lag):
-        df[f'Gross_Revenue_lag{lag}'] = df['Gross_Revenue'].shift(lag+1)
-
-    # Rolling statistics of the previous 3 months
-    df[f'{target_col}_Rolling_Means'] = df[target_col].shift(1).rolling(window=3).mean()
-    df[f'{target_col}_Rolling_STD'] = df[target_col].shift(1).rolling(window=3).std()
 
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
@@ -233,61 +224,38 @@ def main():
     best_params = study.best_params
     print("Best hyperparameters from Optuna:", best_params)
 
-    # 3) ROLLING (WALK-FORWARD) FORECAST ON THE TEST SET
-    rolling_preds = []
-    
-    for i in range(len(test_df)):
-        # up to train + i rows
-        idx = split_idx + i
-        
-        # define current training portion
-        current_df = df.iloc[:idx]
-        
-        X_current = current_df[selected_features]
-        y_current = current_df[target_col]
+    # Scale training features
+    scaler = MinMaxScaler()
+    X_train_scaled = scaler.fit_transform(train_df[selected_features])
+    y_train = train_df[target_col]
 
-        # scale features
-        scaler = MinMaxScaler()
-        X_current_scaled = scaler.fit_transform(X_current)
+    # Train SVR with best hyperparameters on full training set
+    model = SVR(**best_params)
+    model.fit(X_train_scaled, y_train)
 
-        # train SVR with best hyperparams
-        model = SVR(**best_params)
-        model.fit(X_current_scaled, y_current)
+    # Predict on test set
+    X_test_scaled = scaler.transform(test_df[selected_features])
+    static_preds = model.predict(X_test_scaled)
 
-        # predict the next point (idx)
-        X_next = df[selected_features].iloc[idx:idx+1]
-        X_next_scaled = scaler.transform(X_next)
-        pred = model.predict(X_next_scaled)[0]
-        rolling_preds.append(pred)
+    # Convert to Series for easy evaluation
+    static_preds_series = pd.Series(static_preds, index=test_df.index)
 
-    # align rolling_preds with test index
-    rolling_preds_series = pd.Series(rolling_preds, index=test_df.index)
+    # Training predictions
+    y_train_pred = model.predict(X_train_scaled)
+    train_preds_series = pd.Series(y_train_pred, index=train_df.index)
 
-    scaler_full = MinMaxScaler()
-    X_train_full_scaled = scaler_full.fit_transform(train_df[selected_features])
+    # Evaluate
+    evaluate_forecast("SVR Training", y_train, train_preds_series)
+    evaluate_forecast("SVR Static", test_df[target_col], static_preds_series)
 
-    model_full = SVR(**best_params)
-    model_full.fit(X_train_full_scaled, y_train_full)
-
-    y_train_pred_full = model_full.predict(X_train_full_scaled)
-
-    train_preds_series = pd.Series(y_train_pred_full, index=train_df.index)
-
-    # Evaluate training error
-    evaluate_forecast("SVR Training", y_train_full, train_preds_series)
-
-    # 4) EVALUATE AND PLOT
-    evaluate_forecast("SVR Rolling", y_test_full, rolling_preds_series)
-
-    # Plot
     plt.figure(figsize=(14, 6))
 
-    plt.plot(train_df['Date'], y_train_full, label='Train Actual', color='blue', marker='o')
-    plt.plot(test_df['Date'], y_test_full, label='Test Actual', color='black', marker='o')
-    plt.plot(test_df['Date'], rolling_preds_series, label='Test Prediction (Rolling)', color='green', marker='x')
+    plt.plot(train_df['Date'], y_train, label='Train Actual', color='blue', marker='o')
+    plt.plot(test_df['Date'], test_df[target_col], label='Test Actual', color='black', marker='o')
+    plt.plot(test_df['Date'], static_preds_series, label='Test Prediction (Static)', color='red', marker='x')
 
     plt.axvline(x=test_df['Date'].iloc[0], color='gray', linestyle='--', label='Train-Test Split')
-    plt.title("SVR Rolling-Fit (with Optuna Hyperparams): Actual vs. Predicted")
+    plt.title("SVR Static Prediction (with Optuna Hyperparams)")
     plt.xlabel("Date")
     plt.ylabel(target_col)
     plt.grid(True)
@@ -296,12 +264,13 @@ def main():
     plt.show()
 
     export_forecast_results(
-        model_name="SVR Rolling",
+        model_name="SVR Static",
         dates=test_df['Date'],
         actual=y_test_full,
-        predicted=rolling_preds_series,
+        predicted=static_preds_series,
         filename_prefix="svr_forecast"
     )
+
 
 if __name__ == "__main__":
     main()

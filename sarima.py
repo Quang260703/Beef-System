@@ -39,9 +39,9 @@ def main():
     # list to store rolling predictions
     rolling_preds = []
 
-    # you can adjust these orders
-    order = (1,1,2)
-    seasonal_order = (0,1,1,12)
+    # you can adjust these orders 
+    order = (2,0,0) # the order got from the static SARIMA
+    seasonal_order = (0,0,1,12)
 
     # walk-forward over each row in test
     for i in range(len(test)):
